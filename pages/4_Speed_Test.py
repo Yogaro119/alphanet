@@ -4,8 +4,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from utils import check_auth, load_dashboard_css, render_sidebar
 import time
 import datetime
-import requests
-import threading
 
 st.set_page_config(page_title="AlphaNet — Speed Test", page_icon="🚀",
                    layout="wide", initial_sidebar_state="expanded")
@@ -27,15 +25,16 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ─── How to run ───────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="panel-card">
     <div class="panel-title">ℹ️ ABOUT SPEED TEST</div>
     <div style="font-family:var(--mono);font-size:12px;color:rgba(255,255,255,0.45);
                 line-height:2;letter-spacing:1px;">
-        › This module uses the <code>Cloudflare Speed Test API</code> to measure your network speed.<br>
-        › No extra libraries needed — works on Streamlit Cloud.<br>
+        › This module uses the <code>speedtest-cli</code> library to measure your real network speed.<br>
+        › Make sure it is installed: <code>pip install speedtest-cli</code><br>
         › The test may take 15–30 seconds depending on your connection.<br>
-        › Results include: Download speed, Upload speed, and Ping.
+        › Results include: Download speed, Upload speed, Ping, and ISP info.
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -44,49 +43,23 @@ run_btn = st.button("▶  RUN SPEED TEST", key="run_speed", use_container_width=
 
 def run_speedtest():
     try:
-        # ── Ping ──────────────────────────────────────────────────────────────
-        ping_times = []
-        for _ in range(5):
-            t0 = time.time()
-            requests.get("https://speed.cloudflare.com/", timeout=10)
-            ping_times.append((time.time() - t0) * 1000)
-        ping = round(sum(ping_times) / len(ping_times), 2)
-
-        # ── Download ──────────────────────────────────────────────────────────
-        # Download a 10 MB chunk from Cloudflare
-        dl_url = "https://speed.cloudflare.com/__down?bytes=10000000"
-        t0 = time.time()
-        r = requests.get(dl_url, timeout=60)
-        elapsed = time.time() - t0
-        size_mb = len(r.content) / (1024 * 1024)
-        download = round((size_mb * 8) / elapsed, 2)   # Mbps
-
-        # ── Upload ────────────────────────────────────────────────────────────
-        # Upload a 5 MB payload to Cloudflare
-        payload = b"0" * 5_000_000
-        t0 = time.time()
-        requests.post("https://speed.cloudflare.com/__up",
-                      data=payload,
-                      headers={"Content-Type": "application/octet-stream"},
-                      timeout=60)
-        elapsed = time.time() - t0
-        upload = round((5 * 8) / elapsed, 2)            # Mbps
-
-        # ── ISP via ipinfo ─────────────────────────────────────────────────────
-        try:
-            ip_info = requests.get("https://ipinfo.io/json", timeout=5).json()
-            isp     = ip_info.get("org", "Unknown")
-            server  = ip_info.get("city", "—")
-            country = ip_info.get("country", "—")
-        except Exception:
-            isp, server, country = "Unknown", "—", "—"
-
+        import speedtest
+        st_obj = speedtest.Speedtest()
+        st_obj.get_best_server()
+        ping      = round(st_obj.results.ping, 2)
+        download  = round(st_obj.download() / 1_000_000, 2)
+        upload    = round(st_obj.upload()   / 1_000_000, 2)
+        isp       = st_obj.results.client.get("isp", "Unknown")
+        server    = st_obj.results.server.get("name", "—")
+        country   = st_obj.results.server.get("country", "—")
         return {
             "download": download, "upload": upload,
             "ping": ping, "isp": isp,
             "server": server, "country": country,
             "error": None
         }
+    except ImportError:
+        return {"error": "speedtest-cli not installed. Run: pip install speedtest-cli"}
     except Exception as e:
         return {"error": str(e)}
 
@@ -100,6 +73,7 @@ if run_btn:
     else:
         d, u, p = result["download"], result["upload"], result["ping"]
 
+        # ── Gauge-style display ──
         def speed_bar_color(mbps):
             if mbps >= 100: return "#00ff88"
             if mbps >= 50:  return "#ffd700"
@@ -134,6 +108,7 @@ if run_btn:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
+        # Progress bars
         st.markdown('<div class="panel-title">📊 SPEED ANALYSIS</div>', unsafe_allow_html=True)
 
         for label, val, unit, max_val in [
@@ -161,6 +136,7 @@ if run_btn:
             </div>
             """, unsafe_allow_html=True)
 
+        # Server info
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown(f"""
         <div class="panel-card">
@@ -169,12 +145,13 @@ if run_btn:
                         color:rgba(255,255,255,0.5);">
                 <span style="color:rgba(0,255,136,0.6);">ISP &nbsp;&nbsp;&nbsp;&nbsp;›</span>
                 &nbsp; {result['isp']}<br>
-                <span style="color:rgba(0,255,136,0.6);">LOCATION ›</span>
+                <span style="color:rgba(0,255,136,0.6);">SERVER &nbsp;›</span>
                 &nbsp; {result['server']}, {result['country']}
             </div>
         </div>
         """, unsafe_allow_html=True)
 
+        # Log
         if "logs" not in st.session_state:
             st.session_state["logs"] = []
         st.session_state["logs"].append({
